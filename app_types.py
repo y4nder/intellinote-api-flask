@@ -13,5 +13,6 @@ class Keyword:
 class GeneratedResponse :
     keywords: list[Keyword]
     summary: str
+    topics: list[str]
     
     

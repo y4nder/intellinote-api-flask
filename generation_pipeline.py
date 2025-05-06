@@ -1,17 +1,28 @@
 from dataclasses import asdict
 import logging
-from app_types import GeneratedResponse
+
+from openai import OpenAI
+from app_types import GeneratedResponse, Keyword
 from keyword_extraction import KeywordExtractor
 from summarizer import PegasusSummarizer
+from dotenv import load_dotenv
+import os
+
+
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
+API_KEY = os.getenv("OPEN_AI_API_KEY")
+client = OpenAI(api_key=API_KEY)
+
 
 def run_generate(document: str, extractor: KeywordExtractor, summarizer: PegasusSummarizer):
-    keywords = extractor.extract_keywords(document=document)
-    keyword_dicts = [asdict(k) for k in keywords]
     summarization = summarize_large_document(document=document, summarizer=summarizer)
-    return GeneratedResponse(keywords=keyword_dicts, summary=summarization)
+    keywords = extractor.extract_keywords(document=summarization + " " + document)
+    keyword_dicts = [asdict(k) for k in keywords]
+    generated_topics = generate_topics(keywords=keywords, summary=summarization)
+    return GeneratedResponse(keywords=keyword_dicts, summary=summarization, topics=generated_topics)
 
 
 def chunk_text(document: str, tokenizer, max_tokens=1024):
@@ -35,6 +46,58 @@ def chunk_text(document: str, tokenizer, max_tokens=1024):
         chunks.append(current_chunk.strip())
     
     return chunks
+
+def generate_topics(keywords: list[Keyword], summary: str) -> list[str]:
+    """
+    Generates concise topics based on the keywords and summary.
+    """
+    logger.info("Generating concise topics from keywords and summary...")
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant that generates concise topics. "
+                        "Return a list of topics delimited by new lines, without bullet points or dashes."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Keywords: {[k.keyword for k in keywords]}\nSummary: {summary}"
+                }
+            ],
+            max_tokens=100,
+            temperature=0.7
+        )
+        raw_topics = response.choices[0].message.content.strip().split("\n")
+        topics = [t.lstrip("-• ").strip() for t in raw_topics if t.strip()]
+        logger.info(f"Generated {len(topics)} concise topics.")
+        return topics
+    except Exception as e:
+        logger.error(f"OpenAI topic generation failed: {e}")
+        return []
+
+
+def summarize_with_openai(text: str, model: str = "gpt-3.5-turbo", max_tokens: int = 300) -> str:
+    logger.info("Sending text to OpenAI for final summarization...")
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes documents."},
+                {"role": "user", "content": f"Summarize the following text:\n\n{text}"}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.7
+        )
+        summary = response.choices[0].message.content.strip()
+        logger.info("OpenAI summarization successful.")
+        return summary
+    except Exception as e:
+        logger.error(f"OpenAI summarization failed: {e}")
+        return ""
 
 def summarize_large_document(document: str, summarizer: PegasusSummarizer, max_input_length: int = 1024, max_summary_length: int = 128):
     """
@@ -63,7 +126,8 @@ def summarize_large_document(document: str, summarizer: PegasusSummarizer, max_i
 
     # Step 4: Summarize the concatenated summaries (optional, for hierarchical summarization)
     logger.info("Summarizing the concatenated chunk summaries...")
-    final_summary = summarizer.summarize(final_summary_input, max_input_length=max_input_length, max_summary_length=max_summary_length)
+    final_summary = summarize_with_openai(final_summary_input)
     logger.info("Final summary generated.")
 
     return final_summary
+

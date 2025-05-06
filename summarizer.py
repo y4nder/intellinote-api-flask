@@ -17,7 +17,7 @@ class PegasusSummarizer:
         logger.info(f"Model '{model_name}' loaded successfully.")
 
     def summarize(self, text: str, max_input_length: int = 1024, max_summary_length: int = 128,
-                  num_beams: int = 8, temperature: float = 1.0) -> str:
+                  num_beams: int = 8, temperature: float = 0.7) -> str:
         if not text.strip():
             logger.warning("Input text is empty.")
             return ""
